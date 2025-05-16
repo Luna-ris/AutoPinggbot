@@ -45,15 +45,17 @@ async def generate_session(api_id, api_hash, phone, code, password=None):
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Start command received")
     await update.message.reply_text("Привет! Используйте /setup для настройки бота.")
     return ConversationHandler.END
 
 # Начало настройки
 async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Setup command received")
     config = load_config()
     if all(key in config for key in ["API_ID", "API_HASH", "SESSION_STRING", "BOT_TOKEN"]):
         await update.message.reply_text("Бот уже настроен. Хотите переконфигурировать? Напишите /setup снова.")
-        return API_ID  # Возвращаем состояние API_ID вместо ConversationHandler.END
+        return API_ID
     await update.message.reply_text("Введите API_ID:")
     return API_ID
 
@@ -110,7 +112,6 @@ async def get_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     save_config(config)
     await update.message.reply_text("Настройка завершена! Бот готов к работе.")
-    # Перезапуск бота с новыми настройками (можно реализовать дополнительно)
     return ConversationHandler.END
 
 # Отмена настройки
@@ -122,7 +123,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     # Загрузка конфигурации
     config = load_config()
-    
+
     # Проверка переменных окружения (для совместимости с текущей версией)
     API_ID = config.get("API_ID", os.getenv("API_ID"))
     API_HASH = config.get("API_HASH", os.getenv("API_HASH"))
