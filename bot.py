@@ -1,4 +1,5 @@
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telegram import Bot
 import os
 import re
@@ -10,12 +11,16 @@ from telethon.errors.rpcerrorlist import FloodWaitError
 # Загрузка конфигурации
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
+API_HASH = os.getenv("API_HASH"))
 PHONE = os.getenv("PHONE")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+SESSION_STRING = os.getenv("SESSION_STRING")  # Строка сессии из переменной окружения
 
 # Инициализация клиента и бота
-client = TelegramClient("session", API_ID, API_HASH)
+if SESSION_STRING:
+    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+else:
+    client = TelegramClient("session", API_ID, API_HASH)
 bot = Bot(token=BOT_TOKEN)
 
 # Хранение настроек
@@ -85,14 +90,24 @@ async def handle_messages(event):
                 f"{'[Edited] ' if is_edited else ''}Упоминание в группе '{chat_title}' (@{chat.username if hasattr(chat, 'username') else chat_id}):\n"
                 f"{message_text}\n"
                 f"Ссылка: t.me/c/{str(chat_id).replace('-100', '')}/{message_id}\n"
-                f"Время: 2025-05-16 20:17 MSK"
+                f"Время: {event.date.strftime('%Y-%m-%d %H:%M:%S %Z')}"
             )
-            await bot.send_message(chat_id=config["user_id"], text=notification)
+            try:
+                await bot.send_message(chat_id=config["user_id"], text=notification)
+            except FloodWaitError as e:
+                print(f"Flood wait error: need to wait {e.seconds} seconds")
+                await asyncio.sleep(e.seconds)
+                await bot.send_message(chat_id=config["user_id"], text=notification)
 
 async def main():
     while True:
         try:
             await client.start(phone=PHONE)
+            if not SESSION_STRING:
+                # Сохранить строку сессии после авторизации (для локального тестирования)
+                session_string = client.session.save()
+                print(f"Строка сессии: {session_string}")
+                print("Сохраните эту строку в переменной окружения SESSION_STRING")
             break
         except FloodWaitError as e:
             print(f"Flood wait error: need to wait {e.seconds} seconds")
