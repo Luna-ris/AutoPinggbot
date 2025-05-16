@@ -5,22 +5,30 @@ import os
 import re
 import json
 import asyncio
+import logging
 from dotenv import load_dotenv
-from telethon.errors.rpcerrorlist import FloodWaitError
+from telethon.errors.rpcerrorlist import FloodWaitError, SessionPasswordNeededError
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Загрузка конфигурации
 load_dotenv()
-API_ID = int(os.getenv("API_ID"))
+API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SESSION_STRING = os.getenv("SESSION_STRING")  # Строка сессии из переменной окружения
 
+# Проверка обязательных переменных
+if not all([API_ID, API_HASH, PHONE, BOT_TOKEN, SESSION_STRING]):
+    missing = [k for k, v in {"API_ID": API_ID, "API_HASH": API_HASH, "PHONE": PHONE, "BOT_TOKEN": BOT_TOKEN, "SESSION_STRING": SESSION_STRING}.items() if not v]
+    logger.error(f"Отсутствуют переменные окружения: {', '.join(missing)}")
+    raise ValueError(f"Необходимо указать все переменные окружения: {', '.join(missing)}")
+
 # Инициализация клиента и бота
-if SESSION_STRING:
-    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-else:
-    client = TelegramClient("session", API_ID, API_HASH)
+client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
 bot = Bot(token=BOT_TOKEN)
 
 # Хранение настроек
@@ -95,26 +103,34 @@ async def handle_messages(event):
             try:
                 await bot.send_message(chat_id=config["user_id"], text=notification)
             except FloodWaitError as e:
-                print(f"Flood wait error: need to wait {e.seconds} seconds")
+                logger.warning(f"Flood wait error: need to wait {e.seconds} seconds")
                 await asyncio.sleep(e.seconds)
                 await bot.send_message(chat_id=config["user_id"], text=notification)
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления: {e}")
 
 async def main():
     while True:
         try:
             await client.start(phone=PHONE)
-            if not SESSION_STRING:
-                # Сохранить строку сессии после авторизации (для локального тестирования)
-                session_string = client.session.save()
-                print(f"Строка сессии: {session_string}")
-                print("Сохраните эту строку в переменной окружения SESSION_STRING")
+            logger.info("Клиент успешно авторизован")
             break
         except FloodWaitError as e:
-            print(f"Flood wait error: need to wait {e.seconds} seconds")
+            logger.warning(f"Flood wait error: need to wait {e.seconds} seconds")
             await asyncio.sleep(e.seconds)
+        except SessionPasswordNeededError:
+            logger.error("Требуется пароль для двухфакторной аутентификации, но он не поддерживается в этой версии")
+            raise
+        except Exception as e:
+            logger.error(f"Ошибка авторизации: {e}")
+            raise
     await handle_commands()
-    print("Клиент запущен...")
+    logger.info("Клиент запущен...")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+        raise
