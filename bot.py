@@ -94,5 +94,4 @@ async def main():
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
-    init_db()  # Инициализация базы данных, если нужно
     asyncio.run(main())
