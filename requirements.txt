@@ -1,3 +1,4 @@
 telethon==1.28.5
 plyer==2.1.0
 python-telegram-bot==13.7
+urllib3==1.26.18
