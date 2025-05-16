@@ -55,37 +55,45 @@ async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config = load_config()
     if all(key in config for key in ["API_ID", "API_HASH", "SESSION_STRING", "BOT_TOKEN"]):
         await update.message.reply_text("Бот уже настроен. Для перенастройки используйте /reconfigure.")
-        return ConversationHandler.END  # ✅ Теперь завершаем диалог
+        return ConversationHandler.END
     await update.message.reply_text("Введите API_ID:")
     return API_ID
 
 # Обработка API_ID
 async def get_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("API_ID received")
-    context.user_data['api_id'] = update.message.text
+    user_input = update.message.text.strip()
+    if not user_input.isdigit():
+        await update.message.reply_text("API_ID должен быть числом. Попробуйте снова:")
+        return API_ID
+    context.user_data['api_id'] = user_input
     await update.message.reply_text("Введите API_HASH:")
     return API_HASH
 
 # Обработка API_HASH
 async def get_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("API_HASH received")
     context.user_data['api_hash'] = update.message.text
     await update.message.reply_text("Введите номер телефона (например, +1234567890):")
     return PHONE
 
 # Обработка номера телефона
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Phone number received")
     context.user_data['phone'] = update.message.text
     await update.message.reply_text("Введите код авторизации, который пришел в Telegram:")
     return CODE
 
 # Обработка кода авторизации
 async def get_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Auth code received")
     context.user_data['code'] = update.message.text
     await update.message.reply_text("Если включена двухфакторная аутентификация, введите пароль. Если нет, напишите 'нет':")
     return PASSWORD
 
 # Обработка пароля (или его отсутствия)
 async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Password received")
     password = update.message.text if update.message.text.lower() != 'нет' else None
     api_id = int(context.user_data['api_id'])
     api_hash = context.user_data['api_hash']
@@ -104,6 +112,7 @@ async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Обработка BOT_TOKEN и завершение настройки
 async def get_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Bot token received")
     bot_token = update.message.text
     config = {
         "API_ID": context.user_data['api_id'],
@@ -117,13 +126,22 @@ async def get_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Отмена настройки
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Setup cancelled")
     await update.message.reply_text("Настройка отменена.")
     return ConversationHandler.END
 
 # Команда /reconfigure — безопасный перезапуск
 async def reconfigure(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Reconfigure command received")
+    context.user_data.clear()
     await update.message.reply_text("Начинаем перенастройку. Введите /setup.")
+    return ConversationHandler.END
+
+# Команда /reset — очистка состояния
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Reset command received")
+    context.user_data.clear()
+    await update.message.reply_text("Состояние диалога сброшено. Вы можете начать настройку заново.")
     return ConversationHandler.END
 
 # Основная функция
@@ -148,7 +166,9 @@ def main():
 
     # Настройка ConversationHandler для процесса настройки
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("setup", setup)],
+        entry_points=[
+            CommandHandler("setup", setup),
+        ],
         states={
             API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_id)],
             API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_hash)],
@@ -157,12 +177,12 @@ def main():
             PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
             BOT_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bot_token)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("reset", reset)],
     )
 
     # Добавление обработчиков
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("reconfigure", reconfigure))  # 🆕 добавлено
+    application.add_handler(CommandHandler("reconfigure", reconfigure))
     application.add_handler(conv_handler)
 
     # Запуск бота
