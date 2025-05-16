@@ -55,7 +55,7 @@ async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config = load_config()
     if all(key in config for key in ["API_ID", "API_HASH", "SESSION_STRING", "BOT_TOKEN"]):
         await update.message.reply_text("Бот уже настроен. Хотите переконфигурировать? Напишите /setup снова.")
-        return API_ID
+        return API_ID  # Возвращаем состояние API_ID
     await update.message.reply_text("Введите API_ID:")
     return API_ID
 
