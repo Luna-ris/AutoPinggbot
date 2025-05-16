@@ -54,8 +54,8 @@ async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Setup command received")
     config = load_config()
     if all(key in config for key in ["API_ID", "API_HASH", "SESSION_STRING", "BOT_TOKEN"]):
-        await update.message.reply_text("Бот уже настроен. Хотите переконфигурировать? Напишите /setup снова.")
-        return API_ID  # Возвращаем состояние API_ID
+        await update.message.reply_text("Бот уже настроен. Для перенастройки используйте /reconfigure.")
+        return ConversationHandler.END  # ✅ Теперь завершаем диалог
     await update.message.reply_text("Введите API_ID:")
     return API_ID
 
@@ -120,12 +120,18 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Настройка отменена.")
     return ConversationHandler.END
 
+# Команда /reconfigure — безопасный перезапуск
+async def reconfigure(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Reconfigure command received")
+    await update.message.reply_text("Начинаем перенастройку. Введите /setup.")
+    return ConversationHandler.END
+
 # Основная функция
 def main():
     # Загрузка конфигурации
     config = load_config()
 
-    # Проверка переменных окружения (для совместимости с текущей версией)
+    # Проверка переменных окружения
     API_ID = config.get("API_ID", os.getenv("API_ID"))
     API_HASH = config.get("API_HASH", os.getenv("API_HASH"))
     SESSION_STRING = config.get("SESSION_STRING", os.getenv("SESSION_STRING"))
@@ -136,10 +142,6 @@ def main():
         logger.info("Конфигурация неполная. Запустите бота и используйте /setup.")
     else:
         logger.info("Конфигурация загружена. Запуск бота...")
-        # Здесь можно добавить текущую логику бота (например, запуск Telethon клиента)
-        # Пример:
-        # with TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH) as client:
-        #     client.run_until_disconnected()
 
     # Настройка python-telegram-bot
     application = Application.builder().token(BOT_TOKEN or "dummy_token").build()
@@ -160,6 +162,7 @@ def main():
 
     # Добавление обработчиков
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("reconfigure", reconfigure))  # 🆕 добавлено
     application.add_handler(conv_handler)
 
     # Запуск бота
