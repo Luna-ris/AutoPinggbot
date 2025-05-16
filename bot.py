@@ -1,149 +1,167 @@
-from telethon import TelegramClient, events
-from telethon.sessions import StringSession
-from telegram import Bot
 import os
-import re
 import json
-import asyncio
 import logging
+from telethon.sync import TelegramClient
+from telethon.sessions import StringSession
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
-from telethon.errors.rpcerrorlist import FloodWaitError, SessionPasswordNeededError, AuthKeyUnregisteredError
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Загрузка конфигурации
-load_dotenv()
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-PHONE = os.getenv("PHONE")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-SESSION_STRING = os.getenv("SESSION_STRING")
+# Состояния для ConversationHandler
+API_ID, API_HASH, PHONE, CODE, PASSWORD, BOT_TOKEN = range(6)
 
-# Проверка обязательных переменных
-if not all([API_ID, API_HASH, PHONE, BOT_TOKEN, SESSION_STRING]):
-    missing = [k for k, v in {"API_ID": API_ID, "API_HASH": API_HASH, "PHONE": PHONE, "BOT_TOKEN": BOT_TOKEN, "SESSION_STRING": SESSION_STRING}.items() if not v]
-    logger.error(f"Отсутствуют переменные окружения: {', '.join(missing)}")
-    raise ValueError(f"Необходимо указать все переменные окружения: {', '.join(missing)}")
-
-# Инициализация клиента и бота
-try:
-    client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
-except ValueError as e:
-    logger.error(f"Недействительная строка сессии: {e}")
-    raise ValueError("SESSION_STRING недействительна. Сгенерируйте новую строку сессии с помощью session.py.")
-
-bot = Bot(token=BOT_TOKEN)
-
-# Хранение настроек
+# Путь для сохранения конфигурации
 CONFIG_FILE = "config.json"
-def save_config(config):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f)
 
+# Загрузка переменных окружения
+load_dotenv()
+
+# Функция для загрузки конфигурации из файла
 def load_config():
-    try:
-        with open(CONFIG_FILE, "r") as f:
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r') as f:
             return json.load(f)
-    except FileNotFoundError:
-        return {"nicknames": [], "user_id": None}
+    return {}
 
-# Обработчик команд
-async def handle_commands():
-    config = load_config()
+# Функция для сохранения конфигурации в файл
+def save_config(config):
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=4)
+
+# Функция для проверки и генерации сессии
+async def generate_session(api_id, api_hash, phone, code, password=None):
     try:
-        me = await client.get_me()
+        async with TelegramClient(StringSession(), api_id, api_hash) as client:
+            await client.start(phone=phone, code_callback=lambda: code, password=password)
+            session_string = client.session.save()
+            return session_string
     except Exception as e:
-        logger.error(f"Ошибка получения информации о пользователе: {e}")
-        raise
+        logger.error(f"Ошибка генерации сессии: {e}")
+        return None
 
-    @client.on(events.NewMessage(chats=[me.id]))
-    async def handler(event):
-        text = event.message.text
-        user_id = event.sender_id
+# Команда /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Используйте /setup для настройки бота.")
+    return ConversationHandler.END
 
-        if text.startswith("/start"):
-            await event.reply("Введи токен бота для уведомлений.")
-        elif text.startswith("/setbottoken"):
-            config["bot_token"] = text.split(" ", 1)[1] if len(text.split(" ")) > 1 else ""
-            save_config(config)
-            await event.reply("Токен бота обновлен. Введи никнеймы для отслеживания (через запятую).")
-        elif text.startswith("/setnicknames"):
-            config["nicknames"] = [n.strip() for n in text.split(" ", 1)[1].split(",")] if len(text.split(" ")) > 1 else []
-            config["user_id"] = user_id
-            save_config(config)
-            await event.reply(f"Никнеймы обновлены: {', '.join(config['nicknames'])}")
-        elif text.startswith("/list"):
-            await event.reply(f"Никнеймы: {', '.join(config['nicknames'])}\nУведомления для: {config['user_id']}")
-        elif text.startswith("/stop"):
-            config = {"nicknames": [], "user_id": None}
-            save_config(config)
-            await event.reply("Отслеживание остановлено.")
-
-# Обработчик сообщений
-@client.on(events.NewMessage)
-@client.on(events.MessageEdited)
-async def handle_messages(event):
+# Начало настройки
+async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config = load_config()
-    if not config["nicknames"] or not config["user_id"]:
-        return
+    if all(key in config for key in ["API_ID", "API_HASH", "SESSION_STRING", "BOT_TOKEN"]):
+        await update.message.reply_text("Бот уже настроен. Хотите переконфигурировать? Напишите /setup снова.")
+        return ConversationHandler.END
+    await update.message.reply_text("Введите API_ID:")
+    return API_ID
 
-    message = event.message
-    if not message.text:
-        return
+# Обработка API_ID
+async def get_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['api_id'] = update.message.text
+    await update.message.reply_text("Введите API_HASH:")
+    return API_HASH
 
-    chat = await event.get_chat()
-    chat_title = getattr(chat, "title", "Unknown Chat")
-    chat_id = event.chat_id
-    message_id = event.message_id
-    is_edited = event.is_edited
-    message_text = message.text
+# Обработка API_HASH
+async def get_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['api_hash'] = update.message.text
+    await update.message.reply_text("Введите номер телефона (например, +1234567890):")
+    return PHONE
 
-    for nickname in config["nicknames"]:
-        pattern = rf"(?:@?){re.escape(nickname.lstrip('@'))}\b"
-        if re.search(pattern, message_text, re.IGNORECASE):
-            notification = (
-                f"{'[Edited] ' if is_edited else ''}Упоминание в группе '{chat_title}' (@{chat.username if hasattr(chat, 'username') else chat_id}):\n"
-                f"{message_text}\n"
-                f"Ссылка: t.me/c/{str(chat_id).replace('-100', '')}/{message_id}\n"
-                f"Время: {event.date.strftime('%Y-%m-%d %H:%M:%S %Z')}"
-            )
-            try:
-                await bot.send_message(chat_id=config["user_id"], text=notification)
-            except FloodWaitError as e:
-                logger.warning(f"Flood wait error: need to wait {e.seconds} seconds")
-                await asyncio.sleep(e.seconds)
-                await bot.send_message(chat_id=config["user_id"], text=notification)
-            except Exception as e:
-                logger.error(f"Ошибка отправки уведомления: {e}")
+# Обработка номера телефона
+async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['phone'] = update.message.text
+    await update.message.reply_text("Введите код авторизации, который пришел в Telegram:")
+    return CODE
 
-async def main():
-    try:
-        await client.connect()
-        if not await client.is_user_authorized():
-            logger.error("Сессия недействительна или не авторизована. Сгенерируйте новую строку сессии.")
-            raise ValueError("Сессия недействительна. Запустите session.py для генерации новой SESSION_STRING.")
-        logger.info("Клиент успешно авторизован")
-    except FloodWaitError as e:
-        logger.warning(f"Flood wait error: need to wait {e.seconds} seconds")
-        await asyncio.sleep(e.seconds)
-    except SessionPasswordNeededError:
-        logger.error("Требуется пароль для двухфакторной аутентификации. Укажите пароль в session.py.")
-        raise
-    except AuthKeyUnregisteredError:
-        logger.error("Ключ авторизации недействителен. Сгенерируйте новую строку сессии.")
-        raise
-    except Exception as e:
-        logger.error(f"Ошибка авторизации: {e}")
-        raise
-    await handle_commands()
-    logger.info("Клиент запущен...")
-    await client.run_until_disconnected()
+# Обработка кода авторизации
+async def get_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['code'] = update.message.text
+    await update.message.reply_text("Если включена двухфакторная аутентификация, введите пароль. Если нет, напишите 'нет':")
+    return PASSWORD
+
+# Обработка пароля (или его отсутствия)
+async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    password = update.message.text if update.message.text.lower() != 'нет' else None
+    api_id = int(context.user_data['api_id'])
+    api_hash = context.user_data['api_hash']
+    phone = context.user_data['phone']
+    code = context.user_data['code']
+
+    # Генерация сессии
+    session_string = await generate_session(api_id, api_hash, phone, code, password)
+    if session_string:
+        context.user_data['session_string'] = session_string
+        await update.message.reply_text("Введите BOT_TOKEN (получите от @BotFather):")
+        return BOT_TOKEN
+    else:
+        await update.message.reply_text("Ошибка генерации сессии. Попробуйте снова с /setup.")
+        return ConversationHandler.END
+
+# Обработка BOT_TOKEN и завершение настройки
+async def get_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bot_token = update.message.text
+    config = {
+        "API_ID": context.user_data['api_id'],
+        "API_HASH": context.user_data['api_hash'],
+        "SESSION_STRING": context.user_data['session_string'],
+        "BOT_TOKEN": bot_token
+    }
+    save_config(config)
+    await update.message.reply_text("Настройка завершена! Бот готов к работе.")
+    # Перезапуск бота с новыми настройками (можно реализовать дополнительно)
+    return ConversationHandler.END
+
+# Отмена настройки
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Настройка отменена.")
+    return ConversationHandler.END
+
+# Основная функция
+def main():
+    # Загрузка конфигурации
+    config = load_config()
+    
+    # Проверка переменных окружения (для совместимости с текущей версией)
+    API_ID = config.get("API_ID", os.getenv("API_ID"))
+    API_HASH = config.get("API_HASH", os.getenv("API_HASH"))
+    SESSION_STRING = config.get("SESSION_STRING", os.getenv("SESSION_STRING"))
+    BOT_TOKEN = config.get("BOT_TOKEN", os.getenv("BOT_TOKEN"))
+
+    # Если данные отсутствуют, бот запустится и будет ждать команды /setup
+    if not all([API_ID, API_HASH, SESSION_STRING, BOT_TOKEN]):
+        logger.info("Конфигурация неполная. Запустите бота и используйте /setup.")
+    else:
+        logger.info("Конфигурация загружена. Запуск бота...")
+        # Здесь можно добавить текущую логику бота (например, запуск Telethon клиента)
+        # Пример:
+        # with TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH) as client:
+        #     client.run_until_disconnected()
+
+    # Настройка python-telegram-bot
+    application = Application.builder().token(BOT_TOKEN or "dummy_token").build()
+
+    # Настройка ConversationHandler для процесса настройки
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("setup", setup)],
+        states={
+            API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_id)],
+            API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_hash)],
+            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
+            CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
+            PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
+            BOT_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bot_token)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    # Добавление обработчиков
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv_handler)
+
+    # Запуск бота
+    application.run_polling()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
-        raise
+    main()
