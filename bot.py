@@ -61,6 +61,7 @@ async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Обработка API_ID
 async def get_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("API_ID received")
     context.user_data['api_id'] = update.message.text
     await update.message.reply_text("Введите API_HASH:")
     return API_HASH
