@@ -4,52 +4,54 @@ import logging
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ConversationHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application, CommandHandler, ConversationHandler, MessageHandler,
+    filters, ContextTypes
+)
 from dotenv import load_dotenv
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Состояния для ConversationHandler
-API_ID, API_HASH, PHONE, CODE, PASSWORD, BOT_TOKEN = range(6)
+# Уникальные состояния для ConversationHandler
+STATE_API_ID, STATE_API_HASH, STATE_PHONE, STATE_CODE, STATE_PASSWORD, STATE_BOT_TOKEN = range(6)
 
-# Путь для сохранения конфигурации
+# Путь к конфигу
 CONFIG_FILE = "config.json"
 
-# Загрузка переменных окружения
+# Загрузка .env
 load_dotenv()
 
-# Функция для загрузки конфигурации из файла
+# Загрузка конфига
 def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as f:
             return json.load(f)
     return {}
 
-# Функция для сохранения конфигурации в файл
+# Сохранение конфига
 def save_config(config):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=4)
 
-# Функция для проверки и генерации сессии
+# Генерация сессии
 async def generate_session(api_id, api_hash, phone, code, password=None):
     try:
         async with TelegramClient(StringSession(), api_id, api_hash) as client:
             await client.start(phone=phone, code_callback=lambda: code, password=password)
-            session_string = client.session.save()
-            return session_string
+            return client.session.save()
     except Exception as e:
         logger.error(f"Ошибка генерации сессии: {e}")
         return None
 
-# Команда /start
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Start command received")
     await update.message.reply_text("Привет! Используйте /setup для настройки бота.")
     return ConversationHandler.END
 
-# Начало настройки
+# /setup
 async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Setup command received")
     config = load_config()
@@ -57,62 +59,55 @@ async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Бот уже настроен. Для перенастройки используйте /reconfigure.")
         return ConversationHandler.END
     await update.message.reply_text("Введите API_ID:")
-    return API_ID
+    return STATE_API_ID
 
-# Обработка API_ID
+# Получение API_ID
 async def get_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("API_ID received")
     user_input = update.message.text.strip()
     if not user_input.isdigit():
         await update.message.reply_text("API_ID должен быть числом. Попробуйте снова:")
-        return API_ID
+        return STATE_API_ID
     context.user_data['api_id'] = user_input
     await update.message.reply_text("Введите API_HASH:")
-    return API_HASH
+    return STATE_API_HASH
 
-# Обработка API_HASH
+# Получение API_HASH
 async def get_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("API_HASH received")
     context.user_data['api_hash'] = update.message.text
     await update.message.reply_text("Введите номер телефона (например, +1234567890):")
-    return PHONE
+    return STATE_PHONE
 
-# Обработка номера телефона
+# Получение номера телефона
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Phone number received")
     context.user_data['phone'] = update.message.text
-    await update.message.reply_text("Введите код авторизации, который пришел в Telegram:")
-    return CODE
+    await update.message.reply_text("Введите код авторизации из Telegram:")
+    return STATE_CODE
 
-# Обработка кода авторизации
+# Получение кода
 async def get_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Auth code received")
     context.user_data['code'] = update.message.text
     await update.message.reply_text("Если включена двухфакторная аутентификация, введите пароль. Если нет, напишите 'нет':")
-    return PASSWORD
+    return STATE_PASSWORD
 
-# Обработка пароля (или его отсутствия)
+# Получение пароля
 async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Password received")
     password = update.message.text if update.message.text.lower() != 'нет' else None
     api_id = int(context.user_data['api_id'])
     api_hash = context.user_data['api_hash']
     phone = context.user_data['phone']
     code = context.user_data['code']
 
-    # Генерация сессии
     session_string = await generate_session(api_id, api_hash, phone, code, password)
     if session_string:
         context.user_data['session_string'] = session_string
-        await update.message.reply_text("Введите BOT_TOKEN (получите от @BotFather):")
-        return BOT_TOKEN
+        await update.message.reply_text("Введите BOT_TOKEN от @BotFather:")
+        return STATE_BOT_TOKEN
     else:
         await update.message.reply_text("Ошибка генерации сессии. Попробуйте снова с /setup.")
         return ConversationHandler.END
 
-# Обработка BOT_TOKEN и завершение настройки
+# Получение токена бота
 async def get_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Bot token received")
     bot_token = update.message.text
     config = {
         "API_ID": context.user_data['api_id'],
@@ -124,68 +119,60 @@ async def get_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Настройка завершена! Бот готов к работе.")
     return ConversationHandler.END
 
-# Отмена настройки
+# /cancel
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Setup cancelled")
     await update.message.reply_text("Настройка отменена.")
     return ConversationHandler.END
 
-# Команда /reconfigure — безопасный перезапуск
+# /reconfigure
 async def reconfigure(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Reconfigure command received")
     context.user_data.clear()
-    await update.message.reply_text("Начинаем перенастройку. Введите /setup.")
+    await update.message.reply_text("Перенастройка начата. Введите /setup.")
     return ConversationHandler.END
 
-# Команда /reset — очистка состояния
+# /reset
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Reset command received")
     context.user_data.clear()
-    await update.message.reply_text("Состояние диалога сброшено. Вы можете начать настройку заново.")
+    await update.message.reply_text("Состояние сброшено. Введите /setup для начала.")
     return ConversationHandler.END
 
-# Основная функция
+# Основной запуск
 def main():
-    # Загрузка конфигурации
     config = load_config()
 
-    # Проверка переменных окружения
-    API_ID = config.get("API_ID", os.getenv("API_ID"))
-    API_HASH = config.get("API_HASH", os.getenv("API_HASH"))
-    SESSION_STRING = config.get("SESSION_STRING", os.getenv("SESSION_STRING"))
-    BOT_TOKEN = config.get("BOT_TOKEN", os.getenv("BOT_TOKEN"))
+    api_id = config.get("API_ID", os.getenv("API_ID"))
+    api_hash = config.get("API_HASH", os.getenv("API_HASH"))
+    session_string = config.get("SESSION_STRING", os.getenv("SESSION_STRING"))
+    bot_token = config.get("BOT_TOKEN", os.getenv("BOT_TOKEN"))
 
-    # Если данные отсутствуют, бот запустится и будет ждать команды /setup
-    if not all([API_ID, API_HASH, SESSION_STRING, BOT_TOKEN]):
+    if not all([api_id, api_hash, session_string, bot_token]):
         logger.info("Конфигурация неполная. Запустите бота и используйте /setup.")
     else:
         logger.info("Конфигурация загружена. Запуск бота...")
 
-    # Настройка python-telegram-bot
-    application = Application.builder().token(BOT_TOKEN or "dummy_token").build()
+    application = Application.builder().token(bot_token or "dummy_token").build()
 
-    # Настройка ConversationHandler для процесса настройки
     conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("setup", setup),
-        ],
+        entry_points=[CommandHandler("setup", setup)],
         states={
-            API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_id)],
-            API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_hash)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
-            PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
-            BOT_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bot_token)],
+            STATE_API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_id)],
+            STATE_API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_hash)],
+            STATE_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
+            STATE_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
+            STATE_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
+            STATE_BOT_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bot_token)],
         },
-        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("reset", reset)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("reset", reset),
+        ],
     )
 
-    # Добавление обработчиков
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("reconfigure", reconfigure))
     application.add_handler(conv_handler)
 
-    # Запуск бота
     application.run_polling()
 
 if __name__ == "__main__":
