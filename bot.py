@@ -33,8 +33,9 @@ def load_config():
 # Обработчик команд
 async def handle_commands():
     config = load_config()
+    me = await client.get_me()
 
-    @client.on(events.NewMessage(chats=[client.get_me().id]))
+    @client.on(events.NewMessage(chats=[me.id]))
     async def handler(event):
         text = event.message.text
         user_id = event.sender_id
