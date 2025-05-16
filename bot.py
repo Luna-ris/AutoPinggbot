@@ -52,7 +52,11 @@ def load_config():
 # Обработчик команд
 async def handle_commands():
     config = load_config()
-    me = await client.get_me()
+    try:
+        me = await client.get_me()
+    except Exception as e:
+        logger.error(f"Ошибка получения информации о пользователе: {e}")
+        raise
 
     @client.on(events.NewMessage(chats=[me.id]))
     async def handler(event):
@@ -115,26 +119,24 @@ async def handle_messages(event):
                 logger.error(f"Ошибка отправки уведомления: {e}")
 
 async def main():
-    while True:
-        try:
-            await client.connect()
-            if not await client.is_user_authorized():
-                logger.error("Сессия недействительна или не авторизована. Сгенерируйте новую строку сессии.")
-                raise ValueError("Сессия недействительна. Запустите session.py для генерации новой SESSION_STRING.")
-            logger.info("Клиент успешно авторизован")
-            break
-        except FloodWaitError as e:
-            logger.warning(f"Flood wait error: need to wait {e.seconds} seconds")
-            await asyncio.sleep(e.seconds)
-        except SessionPasswordNeededError:
-            logger.error("Требуется пароль для двухфакторной аутентификации, но он не поддерживается в этой версии")
-            raise
-        except AuthKeyUnregisteredError:
-            logger.error("Ключ авторизации недействителен. Сгенерируйте новую строку сессии.")
-            raise
-        except Exception as e:
-            logger.error(f"Ошибка авторизации: {e}")
-            raise
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            logger.error("Сессия недействительна или не авторизована. Сгенерируйте новую строку сессии.")
+            raise ValueError("Сессия недействительна. Запустите session.py для генерации новой SESSION_STRING.")
+        logger.info("Клиент успешно авторизован")
+    except FloodWaitError as e:
+        logger.warning(f"Flood wait error: need to wait {e.seconds} seconds")
+        await asyncio.sleep(e.seconds)
+    except SessionPasswordNeededError:
+        logger.error("Требуется пароль для двухфакторной аутентификации. Укажите пароль в session.py.")
+        raise
+    except AuthKeyUnregisteredError:
+        logger.error("Ключ авторизации недействителен. Сгенерируйте новую строку сессии.")
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка авторизации: {e}")
+        raise
     await handle_commands()
     logger.info("Клиент запущен...")
     await client.run_until_disconnected()
