@@ -5,6 +5,7 @@ import re
 import json
 import asyncio
 from dotenv import load_dotenv
+from telethon.errors.rpcerrorlist import FloodWaitError
 
 # Загрузка конфигурации
 load_dotenv()
@@ -89,7 +90,13 @@ async def handle_messages(event):
             await bot.send_message(chat_id=config["user_id"], text=notification)
 
 async def main():
-    await client.start(phone=PHONE)
+    while True:
+        try:
+            await client.start(phone=PHONE)
+            break
+        except FloodWaitError as e:
+            print(f"Flood wait error: need to wait {e.seconds} seconds")
+            await asyncio.sleep(e.seconds)
     await handle_commands()
     print("Клиент запущен...")
     await client.run_until_disconnected()
