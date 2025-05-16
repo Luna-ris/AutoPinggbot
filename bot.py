@@ -11,7 +11,7 @@ from telethon.errors.rpcerrorlist import FloodWaitError
 # Загрузка конфигурации
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH"))
+API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SESSION_STRING = os.getenv("SESSION_STRING")  # Строка сессии из переменной окружения
