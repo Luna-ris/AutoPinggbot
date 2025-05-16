@@ -7,7 +7,7 @@ import json
 import asyncio
 import logging
 from dotenv import load_dotenv
-from telethon.errors.rpcerrorlist import FloodWaitError, SessionPasswordNeededError
+from telethon.errors.rpcerrorlist import FloodWaitError, SessionPasswordNeededError, AuthKeyUnregisteredError
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,7 +19,7 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 PHONE = os.getenv("PHONE")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SESSION_STRING = os.getenv("SESSION_STRING")  # Строка сессии из переменной окружения
+SESSION_STRING = os.getenv("SESSION_STRING")
 
 # Проверка обязательных переменных
 if not all([API_ID, API_HASH, PHONE, BOT_TOKEN, SESSION_STRING]):
@@ -28,7 +28,12 @@ if not all([API_ID, API_HASH, PHONE, BOT_TOKEN, SESSION_STRING]):
     raise ValueError(f"Необходимо указать все переменные окружения: {', '.join(missing)}")
 
 # Инициализация клиента и бота
-client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+try:
+    client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+except ValueError as e:
+    logger.error(f"Недействительная строка сессии: {e}")
+    raise ValueError("SESSION_STRING недействительна. Сгенерируйте новую строку сессии с помощью session.py.")
+
 bot = Bot(token=BOT_TOKEN)
 
 # Хранение настроек
@@ -112,7 +117,10 @@ async def handle_messages(event):
 async def main():
     while True:
         try:
-            await client.start(phone=PHONE)
+            await client.connect()
+            if not await client.is_user_authorized():
+                logger.error("Сессия недействительна или не авторизована. Сгенерируйте новую строку сессии.")
+                raise ValueError("Сессия недействительна. Запустите session.py для генерации новой SESSION_STRING.")
             logger.info("Клиент успешно авторизован")
             break
         except FloodWaitError as e:
@@ -120,6 +128,9 @@ async def main():
             await asyncio.sleep(e.seconds)
         except SessionPasswordNeededError:
             logger.error("Требуется пароль для двухфакторной аутентификации, но он не поддерживается в этой версии")
+            raise
+        except AuthKeyUnregisteredError:
+            logger.error("Ключ авторизации недействителен. Сгенерируйте новую строку сессии.")
             raise
         except Exception as e:
             logger.error(f"Ошибка авторизации: {e}")
