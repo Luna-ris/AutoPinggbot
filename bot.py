@@ -12,7 +12,7 @@ from telegram.ext import (
 from dotenv import load_dotenv
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Состояния
@@ -23,26 +23,49 @@ TRACKED_USERS_FILE = "tracked_users.json"
 load_dotenv()
 
 def load_config():
+    logger.debug("Попытка загрузки конфигурации из %s", CONFIG_FILE)
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                logger.debug("Конфигурация загружена: %s", config)
+                return config
+        except Exception as e:
+            logger.error("Ошибка при загрузке конфигурации: %s", e)
     return {}
 
 def save_config(config):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=4)
+    logger.debug("Сохранение конфигурации: %s", config)
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=4)
+        logger.info("Конфигурация сохранена в %s", CONFIG_FILE)
+    except Exception as e:
+        logger.error("Ошибка при сохранении конфигурации: %s", e)
 
 def load_tracked_users():
+    logger.debug("Попытка загрузки отслеживаемых пользователей из %s", TRACKED_USERS_FILE)
     if os.path.exists(TRACKED_USERS_FILE):
-        with open(TRACKED_USERS_FILE, 'r') as f:
-            return json.load(f)
+        try:
+            with open(TRACKED_USERS_FILE, 'r') as f:
+                users = json.load(f)
+                logger.debug("Отслеживаемые пользователи: %s", users)
+                return users
+        except Exception as e:
+            logger.error("Ошибка при загрузке отслеживаемых пользователей: %s", e)
     return []
 
 def save_tracked_users(users):
-    with open(TRACKED_USERS_FILE, 'w') as f:
-        json.dump(users, f, indent=4)
+    logger.debug("Сохранение отслеживаемых пользователей: %s", users)
+    try:
+        with open(TRACKED_USERS_FILE, 'w') as f:
+            json.dump(users, f, indent=4)
+        logger.info("Отслеживаемые пользователи сохранены в %s", TRACKED_USERS_FILE)
+    except Exception as e:
+        logger.error("Ошибка при сохранении отслеживаемых пользователей: %s", e)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Команда /start вызвана пользователем %s", update.message.from_user.id)
     config = load_config()
     if not all(key in config for key in ["API_ID", "API_HASH", "SESSION_STRING", "BOT_TOKEN"]):
         await update.message.reply_text("Бот не настроен. Используйте /setup для настройки.")
@@ -51,6 +74,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Команда /setup вызвана пользователем %s", update.message.from_user.id)
     config = load_config()
     if all(key in config for key in ["API_ID", "API_HASH", "SESSION_STRING", "BOT_TOKEN"]):
         await update.message.reply_text("Бот уже настроен. Для перенастройки используйте /reconfigure.")
@@ -60,6 +84,7 @@ async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text.strip()
+    logger.debug("Получен API_ID: %s", user_input)
     if not user_input.isdigit():
         await update.message.reply_text("API_ID должен быть числом. Попробуйте снова:")
         return STATE_API_ID
@@ -69,12 +94,14 @@ async def get_api_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['api_hash'] = update.message.text
+    logger.debug("Получен API_HASH")
     await update.message.reply_text("Введите номер телефона (например, +1234567890):")
     return STATE_PHONE
 
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = update.message.text.strip()
     context.user_data['phone'] = phone
+    logger.debug("Получен номер телефона: %s", phone)
     api_id = int(context.user_data['api_id'])
     api_hash = context.user_data['api_hash']
     client = TelegramClient(StringSession(), api_id, api_hash)
@@ -83,21 +110,24 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent_code = await client.send_code_request(phone)
         context.user_data['client'] = client
         context.user_data['phone_code_hash'] = sent_code.phone_code_hash
+        logger.info("Код авторизации отправлен на номер %s", phone)
         await update.message.reply_text("Введите код из Telegram:")
         return STATE_CODE
     except Exception as e:
-        logger.error(f"Ошибка при отправке кода: {e}")
+        logger.error("Ошибка при отправке кода: %s", e)
         await update.message.reply_text("Ошибка при отправке кода. Попробуйте снова с /setup.")
         await client.disconnect()
         return ConversationHandler.END
 
 async def get_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['code'] = update.message.text.strip()
+    logger.debug("Получен код авторизации")
     await update.message.reply_text("Если включена 2FA, введите пароль. Если нет, напишите 'нет':")
     return STATE_PASSWORD
 
 async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text if update.message.text.lower() != 'нет' else None
+    logger.debug("Получен пароль: %s", "задан" if password else "не задан")
     api_id = int(context.user_data['api_id'])
     api_hash = context.user_data['api_hash']
     phone = context.user_data['phone']
@@ -109,10 +139,11 @@ async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash, password=password)
         session_string = client.session.save()
         context.user_data['session_string'] = session_string
+        logger.info("Авторизация успешна, сессия сохранена")
         await update.message.reply_text("Введите BOT_TOKEN от @BotFather:")
         return STATE_BOT_TOKEN
     except Exception as e:
-        logger.error(f"Ошибка авторизации: {e}")
+        logger.error("Ошибка авторизации: %s", e)
         await update.message.reply_text(f"Ошибка авторизации: {str(e)}. Попробуйте снова с /setup.")
         await client.disconnect()
         return ConversationHandler.END
@@ -121,6 +152,7 @@ async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_token = update.message.text.strip()
+    logger.debug("Получен BOT_TOKEN")
     config = {
         "API_ID": context.user_data['api_id'],
         "API_HASH": context.user_data['api_hash'],
@@ -129,10 +161,12 @@ async def get_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ADMIN_ID": str(update.message.from_user.id)
     }
     save_config(config)
-    await update.message.reply_text("Настройка завершена! Бот готов к работе.")
+    await update.message.reply_text("Настройка завершена! Перезапустите бота для применения изменений.")
+    logger.info("Настройка завершена для пользователя %s", update.message.from_user.id)
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Команда /cancel вызвана пользователем %s", update.message.from_user.id)
     if 'client' in context.user_data:
         await context.user_data['client'].disconnect()
     context.user_data.clear()
@@ -140,6 +174,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def reconfigure(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Команда /reconfigure вызвана пользователем %s", update.message.from_user.id)
     if 'client' in context.user_data:
         await context.user_data['client'].disconnect()
     context.user_data.clear()
@@ -147,6 +182,7 @@ async def reconfigure(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Команда /reset вызвана пользователем %s", update.message.from_user.id)
     if 'client' in context.user_data:
         await context.user_data['client'].disconnect()
     context.user_data.clear()
@@ -154,6 +190,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Команда /adduser вызвана пользователем %s", update.message.from_user.id)
     config = load_config()
     if str(update.message.from_user.id) != config.get("ADMIN_ID"):
         await update.message.reply_text("Только администратор может добавлять пользователей.")
@@ -165,6 +202,7 @@ async def get_user_to_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.message.text.strip()
     if not username.startswith('@'):
         username = f"@{username}"
+    logger.debug("Добавление пользователя: %s", username)
     tracked_users = load_tracked_users()
     if username not in tracked_users:
         tracked_users.append(username)
@@ -175,6 +213,7 @@ async def get_user_to_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Команда /removeuser вызвана пользователем %s", update.message.from_user.id)
     config = load_config()
     if str(update.message.from_user.id) != config.get("ADMIN_ID"):
         await update.message.reply_text("Только администратор может удалять пользователей.")
@@ -186,6 +225,7 @@ async def get_user_to_remove(update: Update, context: ContextTypes.DEFAULT_TYPE)
     username = update.message.text.strip()
     if not username.startswith('@'):
         username = f"@{username}"
+    logger.debug("Удаление пользователя: %s", username)
     tracked_users = load_tracked_users()
     if username in tracked_users:
         tracked_users.remove(username)
@@ -208,25 +248,26 @@ async def handle_new_message(event, bot, admin_id):
                     chat_id=admin_id,
                     text=f"Пользователь {user} был упомянут в сообщении: {message_link}"
                 )
+                logger.info("Уведомление отправлено админу %s о пользователе %s", admin_id, user)
             except Exception as e:
-                logger.error(f"Ошибка при отправке уведомления: {e}")
+                logger.error("Ошибка при отправке уведомления: %s", e)
 
 async def main():
     config = load_config()
     api_id = config.get("API_ID")
     api_hash = config.get("API_HASH")
     session_string = config.get("SESSION_STRING")
-    bot_token = config.get("BOT_TOKEN")
+    bot_token = config.get("BOT_TOKEN") or os.getenv("BOT_TOKEN")
     admin_id = config.get("ADMIN_ID")
-
-    # Если конфигурация не заполнена, просто логируем и выходим
-    if not all([api_id, api_hash, bot_token, session_string]):
-        logger.info("Конфигурация не заполнена, бот ожидает команды /setup")
-        return
 
     application = None
     try:
-        # Инициализация бота только с валидным токеном
+        if not bot_token:
+            logger.error("BOT_TOKEN не указан в config.json или .env. Бот не может запуститься.")
+            return
+
+        # Инициализация бота
+        logger.info("Инициализация Application с BOT_TOKEN")
         application = Application.builder().token(bot_token).build()
 
         # Добавление обработчиков команд
@@ -256,24 +297,38 @@ async def main():
         application.add_handler(CommandHandler("reconfigure", reconfigure))
         application.add_handler(conv_handler)
 
-        # Инициализация клиента Telethon
-        client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
+        # Проверка полной конфигурации для запуска Telethon
+        if not all([api_id, api_hash, session_string]):
+            logger.info("Конфигурация не полная, но бот запущен для обработки /setup")
+        else:
+            # Инициализация клиента Telethon
+            logger.info("Инициализация Telethon клиента")
+            client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
 
-        # Регистрация обработчика сообщений
-        @client.on(NewMessage)
-        async def handler(event):
-            await handle_new_message(event, application.bot, admin_id)
+            # Регистрация обработчика сообщений
+            @client.on(NewMessage)
+            async def handler(event):
+                await handle_new_message(event, application.bot, admin_id)
 
-        # Запуск клиента и бота
-        async with client:
-            await client.start()
-            await application.initialize()
-            await application.start()
-            await application.updater.start_polling()
+            async with client:
+                await client.start()
+                logger.info("Telethon клиент запущен")
+
+        # Запуск polling
+        logger.info("Запуск polling")
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        logger.info("Бот успешно запущен и ожидает команды")
+        
+        if all([api_id, api_hash, session_string]):
             await client.run_until_disconnected()
+        else:
+            logger.info("Ожидание завершения polling без Telethon")
+            await application.updater.wait_for_shutdown()
 
     except Exception as e:
-        logger.error(f"Ошибка в главном цикле: {e}")
+        logger.error("Ошибка в главном цикле: %s", e)
         if admin_id and application:
             await application.bot.send_message(
                 chat_id=admin_id,
@@ -281,6 +336,7 @@ async def main():
             )
     finally:
         if application:
+            logger.info("Остановка Application")
             await application.stop()
             await application.shutdown()
 
