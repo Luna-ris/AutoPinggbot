@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, ConversationHandler, MessageHandler,
@@ -187,7 +188,15 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_text = "Статус бота:\n"
     status_text += f"Конфигурация: {'Полная' if config.get('BOT_TOKEN') and config.get('ADMIN_ID') else 'Неполная'}\n"
     status_text += f"Отслеживаемые пользователи: {', '.join(tracked_users) if tracked_users else 'Нет'}\n"
-    status_text += "Бот работает в режиме обработки сообщений."
+    status_text += "Бот работает в режиме обработки сообщений.\n"
+    # Проверка прав бота
+    try:
+        chat_member = await context.bot.get_chat_member(update.message.chat_id, context.bot.id)
+        status_text += f"Права бота в чате: {chat_member.status}\n"
+        if chat_member.status not in ['administrator', 'member']:
+            status_text += "Внимание: Бот не имеет прав для чтения сообщений!\n"
+    except Exception as e:
+        status_text += f"Ошибка проверки прав: {str(e)}\n"
     await update.message.reply_text(status_text)
 
 async def main():
@@ -232,10 +241,12 @@ async def main():
         logger.info("Запуск polling")
         await application.initialize()
         await application.start()
-        await application.updater.start_polling()
+        await application.updater.start_polling(drop_pending_updates=True)
         logger.info("Бот успешно запущен и ожидает команды")
 
-        await application.updater.wait_for_shutdown()
+        # Ожидание сигнала завершения
+        while application.updater.running:
+            await asyncio.sleep(1)
 
     except Exception as e:
         logger.error("Ошибка в главном цикле: %s", e)
@@ -245,10 +256,12 @@ async def main():
                 text=f"Произошла ошибка при запуске бота: {str(e)}"
             )
     finally:
-        if application:
+        if application and application.updater.running:
             logger.info("Остановка Application")
+            await application.updater.stop()
             await application.stop()
             await application.shutdown()
+            logger.info("Application полностью остановлен")
 
 if __name__ == "__main__":
     import asyncio
