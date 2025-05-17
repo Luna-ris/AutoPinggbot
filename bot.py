@@ -180,8 +180,10 @@ async def main():
     bot_token = config.get("BOT_TOKEN", os.getenv("BOT_TOKEN"))
 
     if not api_id or not api_hash:
-        logger.error("API_ID or API_HASH is empty or None. Please check your configuration.")
+        logger.error("API_ID or API_HASH is empty or None. Please use /setup to enter them.")
         return
+
+    logger.info(f"API_ID: {api_id}, API_HASH: {api_hash}")
 
     application = Application.builder().token(bot_token or "dummy_token").build()
 
