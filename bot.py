@@ -43,7 +43,11 @@ def save_tracked_users(users):
         json.dump(users, f, indent=4)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Используйте /setup для настройки бота.")
+    config = load_config()
+    if not all(key in config for key in ["API_ID", "API_HASH", "SESSION_STRING", "BOT_TOKEN"]):
+        await update.message.reply_text("Бот не настроен. Используйте /setup для настройки.")
+        return ConversationHandler.END
+    await update.message.reply_text("Привет! Бот готов к работе. Используйте /adduser для добавления пользователей или /setup для перенастройки.")
     return ConversationHandler.END
 
 async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -219,24 +223,6 @@ async def main():
         # Инициализация бота
         application = Application.builder().token(bot_token or "dummy_token").build()
 
-        # Проверка конфигурации
-        if not all([api_id, api_hash, bot_token, session_string]):
-            if admin_id:
-                await application.bot.send_message(
-                    chat_id=admin_id,
-                    text="Не все параметры конфигурации заполнены. Используйте /setup для настройки."
-                )
-            logger.error("Не все параметры конфигурации заполнены. Используйте /setup для настройки.")
-            return
-
-        # Инициализация клиента Telethon
-        client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
-
-        # Регистрация обработчика сообщений
-        @client.on(NewMessage)
-        async def handler(event):
-            await handle_new_message(event, application.bot, admin_id)
-
         # Добавление обработчиков команд
         conv_handler = ConversationHandler(
             entry_points=[
@@ -263,6 +249,22 @@ async def main():
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("reconfigure", reconfigure))
         application.add_handler(conv_handler)
+
+        # Проверка конфигурации
+        if not all([api_id, api_hash, bot_token, session_string]):
+            logger.info("Конфигурация не заполнена, бот ожидает команды /setup")
+            await application.initialize()
+            await application.start()
+            await application.updater.start_polling()
+            return
+
+        # Инициализация клиента Telethon
+        client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
+
+        # Регистрация обработчика сообщений
+        @client.on(NewMessage)
+        async def handler(event):
+            await handle_new_message(event, application.bot, admin_id)
 
         # Запуск клиента и бота
         async with client:
