@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Состояния
-STATE_API_ID, STATE_API_HASH, STATE_PHONE, STATE_CODE, STATE_PASSWORD, STATE_BOT_TOKEN = range(6)
+STATE_API_ID, STATE_API_HASH, STATE_PHONE, STATE_CODE, STATE_PASSWORD, STATE_BOT_TOKEN, STATE_ADD_USER, STATE_REMOVE_USER = range(8)
 
 CONFIG_FILE = "config.json"
 load_dotenv()
@@ -124,6 +124,26 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Состояние сброшено. Введите /setup для начала.")
     return ConversationHandler.END
 
+async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Введите имя пользователя для добавления:")
+    return STATE_ADD_USER
+
+async def get_user_to_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.message.text.strip()
+    # Добавьте логику для добавления пользователя в список отслеживания
+    await update.message.reply_text(f"Пользователь {username} добавлен в список отслеживания.")
+    return ConversationHandler.END
+
+async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Введите имя пользователя для удаления:")
+    return STATE_REMOVE_USER
+
+async def get_user_to_remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.message.text.strip()
+    # Добавьте логику для удаления пользователя из списка отслеживания
+    await update.message.reply_text(f"Пользователь {username} удален из списка отслеживания.")
+    return ConversationHandler.END
+
 def main():
     config = load_config()
     api_id = config.get("API_ID", os.getenv("API_ID"))
@@ -134,7 +154,11 @@ def main():
     application = Application.builder().token(bot_token or "dummy_token").build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("setup", setup)],
+        entry_points=[
+            CommandHandler("setup", setup),
+            CommandHandler("adduser", add_user),
+            CommandHandler("removeuser", remove_user),
+        ],
         states={
             STATE_API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_id)],
             STATE_API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_hash)],
@@ -142,6 +166,8 @@ def main():
             STATE_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
             STATE_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
             STATE_BOT_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bot_token)],
+            STATE_ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_user_to_add)],
+            STATE_REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_user_to_remove)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
