@@ -3,6 +3,7 @@ import json
 import logging
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
+from telethon.events import NewMessage
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, ConversationHandler, MessageHandler,
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 STATE_API_ID, STATE_API_HASH, STATE_PHONE, STATE_CODE, STATE_PASSWORD, STATE_BOT_TOKEN, STATE_ADD_USER, STATE_REMOVE_USER = range(8)
 
 CONFIG_FILE = "config.json"
+TRACKED_USERS_FILE = "tracked_users.json"
 load_dotenv()
 
 def load_config():
@@ -29,6 +31,16 @@ def load_config():
 def save_config(config):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=4)
+
+def load_tracked_users():
+    if os.path.exists(TRACKED_USERS_FILE):
+        with open(TRACKED_USERS_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+def save_tracked_users(users):
+    with open(TRACKED_USERS_FILE, 'w') as f:
+        json.dump(users, f, indent=4)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Используйте /setup для настройки бота.")
@@ -130,8 +142,13 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_user_to_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.message.text.strip()
-    # Добавьте логику для добавления пользователя в список отслеживания
-    await update.message.reply_text(f"Пользователь {username} добавлен в список отслеживания.")
+    tracked_users = load_tracked_users()
+    if username not in tracked_users:
+        tracked_users.append(username)
+        save_tracked_users(tracked_users)
+        await update.message.reply_text(f"Пользователь {username} добавлен в список отслеживания.")
+    else:
+        await update.message.reply_text(f"Пользователь {username} уже в списке отслеживания.")
     return ConversationHandler.END
 
 async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -140,9 +157,20 @@ async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_user_to_remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.message.text.strip()
-    # Добавьте логику для удаления пользователя из списка отслеживания
-    await update.message.reply_text(f"Пользователь {username} удален из списка отслеживания.")
+    tracked_users = load_tracked_users()
+    if username in tracked_users:
+        tracked_users.remove(username)
+        save_tracked_users(tracked_users)
+        await update.message.reply_text(f"Пользователь {username} удален из списка отслеживания.")
+    else:
+        await update.message.reply_text(f"Пользователь {username} не найден в списке отслеживания.")
     return ConversationHandler.END
+
+async def handle_new_message(event):
+    tracked_users = load_tracked_users()
+    for user in tracked_users:
+        if f"@{user}" in event.raw_text:
+            await event.reply(f"Пользователь @{user} был упомянут в этом сообщении: {event.message.link}")
 
 def main():
     config = load_config()
@@ -182,4 +210,5 @@ def main():
     application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
