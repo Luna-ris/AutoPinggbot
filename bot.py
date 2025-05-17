@@ -219,9 +219,15 @@ async def main():
     bot_token = config.get("BOT_TOKEN")
     admin_id = config.get("ADMIN_ID")
 
+    # Если конфигурация не заполнена, просто логируем и выходим
+    if not all([api_id, api_hash, bot_token, session_string]):
+        logger.info("Конфигурация не заполнена, бот ожидает команды /setup")
+        return
+
+    application = None
     try:
-        # Инициализация бота
-        application = Application.builder().token(bot_token or "dummy_token").build()
+        # Инициализация бота только с валидным токеном
+        application = Application.builder().token(bot_token).build()
 
         # Добавление обработчиков команд
         conv_handler = ConversationHandler(
@@ -250,14 +256,6 @@ async def main():
         application.add_handler(CommandHandler("reconfigure", reconfigure))
         application.add_handler(conv_handler)
 
-        # Проверка конфигурации
-        if not all([api_id, api_hash, bot_token, session_string]):
-            logger.info("Конфигурация не заполнена, бот ожидает команды /setup")
-            await application.initialize()
-            await application.start()
-            await application.updater.start_polling()
-            return
-
         # Инициализация клиента Telethon
         client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
 
@@ -276,13 +274,13 @@ async def main():
 
     except Exception as e:
         logger.error(f"Ошибка в главном цикле: {e}")
-        if admin_id:
+        if admin_id and application:
             await application.bot.send_message(
                 chat_id=admin_id,
                 text=f"Произошла ошибка при запуске бота: {str(e)}"
             )
     finally:
-        if 'application' in locals():
+        if application:
             await application.stop()
             await application.shutdown()
 
