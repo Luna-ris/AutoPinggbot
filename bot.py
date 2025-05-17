@@ -73,16 +73,18 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['phone'] = phone
     api_id = int(context.user_data['api_id'])
     api_hash = context.user_data['api_hash']
+    client = TelegramClient(StringSession(), api_id, api_hash)
     try:
-        client = TelegramClient(StringSession(), api_id, api_hash)
         await client.connect()
-        await client.send_code_request(phone)
+        sent_code = await client.send_code_request(phone)
         context.user_data['client'] = client
+        context.user_data['phone_code_hash'] = sent_code.phone_code_hash
         await update.message.reply_text("Введите код из Telegram:")
         return STATE_CODE
     except Exception as e:
         logger.error(f"Ошибка при отправке кода: {e}")
         await update.message.reply_text("Ошибка при отправке кода. Попробуйте снова с /setup.")
+        await client.disconnect()
         return ConversationHandler.END
 
 async def get_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,52 +98,69 @@ async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     api_hash = context.user_data['api_hash']
     phone = context.user_data['phone']
     code = context.user_data['code']
+    phone_code_hash = context.user_data['phone_code_hash']
     client: TelegramClient = context.user_data['client']
 
     try:
-        await client.sign_in(phone=phone, code=code, password=password)
+        await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash, password=password)
         session_string = client.session.save()
         context.user_data['session_string'] = session_string
-        await client.disconnect()
         await update.message.reply_text("Введите BOT_TOKEN от @BotFather:")
         return STATE_BOT_TOKEN
     except Exception as e:
         logger.error(f"Ошибка авторизации: {e}")
-        await update.message.reply_text("Ошибка авторизации. Попробуйте снова с /setup.")
+        await update.message.reply_text(f"Ошибка авторизации: {str(e)}. Попробуйте снова с /setup.")
+        await client.disconnect()
         return ConversationHandler.END
+    finally:
+        await client.disconnect()
 
 async def get_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    bot_token = update.message.text
+    bot_token = update.message.text.strip()
     config = {
         "API_ID": context.user_data['api_id'],
         "API_HASH": context.user_data['api_hash'],
         "SESSION_STRING": context.user_data['session_string'],
-        "BOT_TOKEN": bot_token
+        "BOT_TOKEN": bot_token,
+        "ADMIN_ID": str(update.message.from_user.id)  # Сохраняем ID админа
     }
     save_config(config)
     await update.message.reply_text("Настройка завершена! Бот готов к работе.")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'client' in context.user_data:
+        await context.user_data['client'].disconnect()
+    context.user_data.clear()
     await update.message.reply_text("Настройка отменена.")
     return ConversationHandler.END
 
 async def reconfigure(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'client' in context.user_data:
+        await context.user_data['client'].disconnect()
     context.user_data.clear()
     await update.message.reply_text("Перенастройка начата. Введите /setup.")
     return ConversationHandler.END
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'client' in context.user_data:
+        await context.user_data['client'].disconnect()
     context.user_data.clear()
     await update.message.reply_text("Состояние сброшено. Введите /setup для начала.")
     return ConversationHandler.END
 
 async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Введите имя пользователя для добавления:")
+    config = load_config()
+    if str(update.message.from_user.id) != config.get("ADMIN_ID"):
+        await update.message.reply_text("Только администратор может добавлять пользователей.")
+        return ConversationHandler.END
+    await update.message.reply_text("Введите имя пользователя для добавления (с @):")
     return STATE_ADD_USER
 
 async def get_user_to_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.message.text.strip()
+    if not username.startswith('@'):
+        username = f"@{username}"
     tracked_users = load_tracked_users()
     if username not in tracked_users:
         tracked_users.append(username)
@@ -152,11 +171,17 @@ async def get_user_to_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Введите имя пользователя для удаления:")
+    config = load_config()
+    if str(update.message.from_user.id) != config.get("ADMIN_ID"):
+        await update.message.reply_text("Только администратор может удалять пользователей.")
+        return ConversationHandler.END
+    await update.message.reply_text("Введите имя пользователя для удаления (с @):")
     return STATE_REMOVE_USER
 
 async def get_user_to_remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.message.text.strip()
+    if not username.startswith('@'):
+        username = f"@{username}"
     tracked_users = load_tracked_users()
     if username in tracked_users:
         tracked_users.remove(username)
@@ -166,69 +191,93 @@ async def get_user_to_remove(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"Пользователь {username} не найден в списке отслеживания.")
     return ConversationHandler.END
 
-async def handle_new_message(event):
+async def handle_new_message(event, bot, admin_id):
     tracked_users = load_tracked_users()
+    message_text = event.raw_text.lower()
+    
     for user in tracked_users:
-        if f"@{user}" in event.raw_text:
-            await event.reply(f"Пользователь @{user} был упомянут в этом сообщении: {event.message.link}")
+        if user.lower() in message_text:
+            try:
+                # Получаем ссылку на сообщение
+                chat = await event.get_chat()
+                message_link = f"https://t.me/c/{str(chat.id).replace('-100', '')}/{event.message.id}"
+                
+                # Отправляем уведомление админу
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=f"Пользователь {user} был упомянут в сообщении: {message_link}"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка при отправке уведомления: {e}")
 
 async def main():
     config = load_config()
-    api_id = config.get("API_ID", os.getenv("API_ID"))
-    api_hash = config.get("API_HASH", os.getenv("API_HASH"))
-    session_string = config.get("SESSION_STRING", os.getenv("SESSION_STRING"))
-    bot_token = config.get("BOT_TOKEN", os.getenv("BOT_TOKEN"))
+    api_id = config.get("API_ID")
+    api_hash = config.get("API_HASH")
+    session_string = config.get("SESSION_STRING")
+    bot_token = config.get("BOT_TOKEN")
+    admin_id = config.get("ADMIN_ID")
 
-    if not api_id or not api_hash:
-        logger.error("API_ID or API_HASH is empty or None. Please use /setup to enter them.")
+    if not all([api_id, api_hash, bot_token, session_string]):
+        logger.error("Не все параметры конфигурации заполнены. Используйте /setup для настройки.")
         return
 
-    logger.info(f"API_ID: {api_id}, API_HASH: {api_hash}")
+    try:
+        # Инициализация бота
+        application = Application.builder().token(bot_token).build()
 
-    application = Application.builder().token(bot_token or "dummy_token").build()
+        # Инициализация клиента Telethon
+        client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
 
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("setup", setup),
-            CommandHandler("adduser", add_user),
-            CommandHandler("removeuser", remove_user),
-        ],
-        states={
-            STATE_API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_id)],
-            STATE_API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_hash)],
-            STATE_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
-            STATE_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
-            STATE_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
-            STATE_BOT_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bot_token)],
-            STATE_ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_user_to_add)],
-            STATE_REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_user_to_remove)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CommandHandler("reset", reset),
-        ],
-    )
+        # Регистрация обработчика сообщений
+        @client.on(NewMessage)
+        async def handler(event):
+            await handle_new_message(event, application.bot, admin_id)
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("reconfigure", reconfigure))
-    application.add_handler(conv_handler)
+        # Добавление обработчиков команд
+        conv_handler = ConversationHandler(
+            entry_points=[
+                CommandHandler("setup", setup),
+                CommandHandler("adduser", add_user),
+                CommandHandler("removeuser", remove_user),
+            ],
+            states={
+                STATE_API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_id)],
+                STATE_API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_api_hash)],
+                STATE_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_phone)],
+                STATE_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_code)],
+                STATE_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
+                STATE_BOT_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_bot_token)],
+                STATE_ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_user_to_add)],
+                STATE_REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_user_to_remove)],
+            },
+            fallbacks=[
+                CommandHandler("cancel", cancel),
+                CommandHandler("reset", reset),
+            ],
+        )
 
-    # Запускаем клиент Telethon для отслеживания упоминаний
-    client = TelegramClient(StringSession(session_string), api_id, api_hash)
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("reconfigure", reconfigure))
+        application.add_handler(conv_handler)
 
-    @client.on(NewMessage)
-    async def handler(event):
-        tracked_users = load_tracked_users()
-        for user in tracked_users:
-            if f"@{user}" in event.raw_text:
-                await event.reply(f"Пользователь @{user} был упомянут в этом сообщении: {event.message.link}")
-                # Отправляем уведомление в Telegram-бота
-                await application.bot.send_message(chat_id=event.sender_id, text=f"Пользователь @{user} был упомянут в этом сообщении: {event.message.link}")
+        # Запуск клиента и бота в конкурентном режиме
+        async with client:
+            # Запускаем polling в отдельной задаче
+            await client.start()
+            await application.initialize()
+            await application.start()
+            await application.updater.start_polling()
+            
+            # Ждем завершения
+            await client.run_until_disconnected()
 
-    await client.start()
-    await client.run_until_disconnected()
-
-    await application.run_polling()
+    except Exception as e:
+        logger.error(f"Ошибка в главном цикле: {e}")
+    finally:
+        if 'application' in locals():
+            await application.stop()
+            await application.shutdown()
 
 if __name__ == "__main__":
     import asyncio
