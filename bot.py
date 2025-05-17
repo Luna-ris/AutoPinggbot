@@ -265,29 +265,38 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     api_hash = config["API_HASH"]
     session_string = config["SESSION_STRING"]
     try:
-        async with TelegramClient(StringSession(session_string), api_id, api_hash) as client:
-            chats = []
-            async for dialog in client.iter_dialogs():
-                if isinstance(dialog.entity, (PeerChannel, PeerChat)):  # Только группы и каналы
-                    chats.append(f"{dialog.name} (ID: {dialog.id})")
-            if not chats:
-                await update.message.reply_text("Нет доступных групп или каналов. Подпишитесь на них через ваш аккаунт.")
-                return
-            # Разбиваем на сообщения по 4000 символов
-            message = "Чаты, доступные Telethon клиенту:\n"
-            messages = []
-            for chat in chats:
-                if len(message) + len(chat) + 1 > 4000:
-                    messages.append(message)
-                    message = "Продолжение:\n"
-                message += chat + "\n"
-            if message:
+        client = TelegramClient(StringSession(session_string), api_id, api_hash)
+        await client.connect()
+        if not await client.is_user_authorized():
+            await update.message.reply_text("Сессия не авторизована. Пожалуйста, выполните /setup заново.")
+            return
+
+        chats = []
+        async for dialog in client.iter_dialogs():
+            if isinstance(dialog.entity, (PeerChannel, PeerChat)):  # Только группы и каналы
+                chats.append(f"{dialog.name} (ID: {dialog.id})")
+
+        if not chats:
+            await update.message.reply_text("Нет доступных групп или каналов. Подпишитесь на них через ваш аккаунт.")
+            return
+
+        # Разбиваем на сообщения по 4000 символов
+        message = "Чаты, доступные Telethon клиенту:\n"
+        messages = []
+        for chat in chats:
+            if len(message) + len(chat) + 1 > 4000:
                 messages.append(message)
-            for msg in messages:
-                await update.message.reply_text(msg)
+                message = "Продолжение:\n"
+            message += chat + "\n"
+        if message:
+            messages.append(message)
+        for msg in messages:
+            await update.message.reply_text(msg)
     except Exception as e:
         logger.error("Ошибка при получении списка чатов: %s", e)
         await update.message.reply_text(f"Ошибка: {str(e)}")
+    finally:
+        await client.disconnect()
 
 async def test_mention(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Команда /testmention вызвана пользователем %s в чате %s", update.message.from_user.id, update.message.chat_id)
