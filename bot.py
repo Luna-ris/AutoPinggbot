@@ -175,6 +175,29 @@ async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         await client.disconnect()
 
+
+    try:
+        await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash, password=password)
+        session_string = client.session.save()
+        config = load_config()
+        config.update({
+            "API_ID": context.user_data['api_id'],
+            "API_HASH": context.user_data['api_hash'],
+            "SESSION_STRING": session_string,
+            "ADMIN_ID": str(update.message.from_user.id)
+        })
+        save_config(config)
+        logger.info("Авторизация успешна, сессия сохранена")
+        await update.message.reply_text("Настройка завершена! Бот готов к работе.")
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error("Ошибка авторизации: %s", e)
+        await update.message.reply_text(f"Ошибка авторизации: {str(e)}. Попробуйте снова с /setup.")
+        await client.disconnect()
+        return ConversationHandler.END
+    finally:
+        await client.disconnect()
+
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Команда /reset вызвана пользователем %s в чате %s", update.message.from_user.id, update.message.chat_id)
     if 'client' in context.user_data:
