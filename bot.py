@@ -207,6 +207,21 @@ def main():
     application.add_handler(CommandHandler("reconfigure", reconfigure))
     application.add_handler(conv_handler)
 
+    # Запускаем клиент Telethon для отслеживания упоминаний
+    client = TelegramClient(StringSession(session_string), api_id, api_hash)
+
+    @client.on(NewMessage)
+    async def handler(event):
+        tracked_users = load_tracked_users()
+        for user in tracked_users:
+            if f"@{user}" in event.raw_text:
+                await event.reply(f"Пользователь @{user} был упомянут в этом сообщении: {event.message.link}")
+                # Отправляем уведомление в Telegram-бота
+                await application.bot.send_message(chat_id=event.sender_id, text=f"Пользователь @{user} был упомянут в этом сообщении: {event.message.link}")
+
+    client.start()
+    client.run_until_disconnected()
+
     application.run_polling()
 
 if __name__ == "__main__":
