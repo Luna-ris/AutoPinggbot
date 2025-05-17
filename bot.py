@@ -179,6 +179,10 @@ def main():
     session_string = config.get("SESSION_STRING", os.getenv("SESSION_STRING"))
     bot_token = config.get("BOT_TOKEN", os.getenv("BOT_TOKEN"))
 
+    if not api_id or not api_hash:
+        logger.error("API_ID or API_HASH is empty or None. Please check your configuration.")
+        return
+
     application = Application.builder().token(bot_token or "dummy_token").build()
 
     conv_handler = ConversationHandler(
