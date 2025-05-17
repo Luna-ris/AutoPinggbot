@@ -1,12 +1,11 @@
+import logging
 import os
 import json
-import logging
 import asyncio
-from telethon.sync import TelegramClient
+from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.events import NewMessage
 from telethon.tl.types import PeerChannel, PeerChat
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import (
     Application, CommandHandler, ConversationHandler, MessageHandler,
     filters, ContextTypes
@@ -265,38 +264,29 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     api_hash = config["API_HASH"]
     session_string = config["SESSION_STRING"]
     try:
-        client = TelegramClient(StringSession(session_string), api_id, api_hash)
-        await client.connect()
-        if not await client.is_user_authorized():
-            await update.message.reply_text("Сессия не авторизована. Пожалуйста, выполните /setup заново.")
-            return
-
-        chats = []
-        async for dialog in client.iter_dialogs():
-            if isinstance(dialog.entity, (PeerChannel, PeerChat)):  # Только группы и каналы
-                chats.append(f"{dialog.name} (ID: {dialog.id})")
-
-        if not chats:
-            await update.message.reply_text("Нет доступных групп или каналов. Подпишитесь на них через ваш аккаунт.")
-            return
-
-        # Разбиваем на сообщения по 4000 символов
-        message = "Чаты, доступные Telethon клиенту:\n"
-        messages = []
-        for chat in chats:
-            if len(message) + len(chat) + 1 > 4000:
+        async with TelegramClient(StringSession(session_string), api_id, api_hash) as client:
+            chats = []
+            async for dialog in client.iter_dialogs():
+                if isinstance(dialog.entity, (PeerChannel, PeerChat)):  # Только группы и каналы
+                    chats.append(f"{dialog.name} (ID: {dialog.id})")
+            if not chats:
+                await update.message.reply_text("Нет доступных групп или каналов. Подпишитесь на них через ваш аккаунт.")
+                return
+            # Разбиваем на сообщения по 4000 символов
+            message = "Чаты, доступные Telethon клиенту:\n"
+            messages = []
+            for chat in chats:
+                if len(message) + len(chat) + 1 > 4000:
+                    messages.append(message)
+                    message = "Продолжение:\n"
+                message += chat + "\n"
+            if message:
                 messages.append(message)
-                message = "Продолжение:\n"
-            message += chat + "\n"
-        if message:
-            messages.append(message)
-        for msg in messages:
-            await update.message.reply_text(msg)
+            for msg in messages:
+                await update.message.reply_text(msg)
     except Exception as e:
         logger.error("Ошибка при получении списка чатов: %s", e)
         await update.message.reply_text(f"Ошибка: {str(e)}")
-    finally:
-        await client.disconnect()
 
 async def test_mention(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Команда /testmention вызвана пользователем %s в чате %s", update.message.from_user.id, update.message.chat_id)
@@ -395,7 +385,7 @@ async def main():
             logger.info("Инициализация Telethon клиента")
             client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
 
-            @client.on(NewMessage(chats=None))  # Мониторить все доступные чаты
+            @client.on(events.NewMessage(chats=None))  # Мониторить все доступные чаты
             async def handler(event):
                 await handle_new_message(event, application.bot, admin_id)
 
