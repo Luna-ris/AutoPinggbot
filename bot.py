@@ -224,17 +224,43 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_text = "Статус бота:\n"
     status_text += f"Конфигурация: {'Полная' if all(key in config for key in ['API_ID', 'API_HASH', 'SESSION_STRING', 'ADMIN_ID']) else 'Неполная'}\n"
     status_text += f"Отслеживаемые пользователи: {', '.join(tracked_users) if tracked_users else 'Нет'}\n"
-    status_text += "Бот работает в режиме обработки сообщений.\n"
+    status_text += "Бот мониторит чаты через Telethon клиент.\n"
     try:
         chat_member = await context.bot.get_chat_member(update.message.chat_id, context.bot.id)
-        status_text += f"Права бота в чате: {chat_member.status}\n"
+        status_text += f"Права бота в текущем чате: {chat_member.status}\n"
         if chat_member.status not in ['administrator', 'member']:
-            status_text += "Внимание: Бот не имеет прав для чтения сообщений!\n"
+            status_text += "Внимание: Бот не имеет прав для чтения сообщений в этом чате!\n"
     except Exception as e:
         status_text += f"Ошибка проверки прав: {str(e)}\n"
     await update.message.reply_text(status_text)
 
+async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Команда /chats вызвана пользователем %s в чате %s", update.message.from_user.id, update.message.chat_id)
+    config = load_config()
+    if not all(key in config for key in ["API_ID", "API_HASH", "SESSION_STRING"]):
+        await update.message.reply_text("Telethon клиент не настроен. Используйте /setup.")
+        return
+    if str(update.message.from_user.id) != config.get("ADMIN_ID"):
+        await update.message.reply_text("Только администратор может просматривать чаты.")
+        return
+    api_id = int(config["API_ID"])
+    api_hash = config["API_HASH"]
+    session_string = config["SESSION_STRING"]
+    try:
+        async with TelegramClient(StringSession(session_string), api_id, api_hash) as client:
+            chats = []
+            async for dialog in client.iter_dialogs():
+                chats.append(f"{dialog.name} (ID: {dialog.id})")
+            if chats:
+                await update.message.reply_text("Чаты, доступные Telethon клиенту:\n" + "\n".join(chats))
+            else:
+                await update.message.reply_text("Нет доступных чатов. Убедитесь, что ваш аккаунт подписан на группы/каналы.")
+    except Exception as e:
+        logger.error("Ошибка при получении списка чатов: %s", e)
+        await update.message.reply_text(f"Ошибка: {str(e)}")
+
 async def handle_new_message(event, bot, admin_id):
+    logger.debug("Получено сообщение в чате %s: %s", event.chat_id, event.raw_text)
     tracked_users = load_tracked_users()
     message_text = event.raw_text.lower() if event.raw_text else ""
     
@@ -247,7 +273,7 @@ async def handle_new_message(event, bot, admin_id):
                     chat_id=admin_id,
                     text=f"Пользователь {user} был упомянут в сообщении: {message_link}"
                 )
-                logger.info("Уведомление отправлено админу %s о пользователе %s", admin_id, user)
+                logger.info("Уведомление отправлено админу %s о пользователе %s в чате %s", admin_id, user, chat.id)
             except Exception as e:
                 logger.error("Ошибка при отправке уведомления: %s", e)
 
@@ -294,6 +320,7 @@ async def main():
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("ping", ping))
         application.add_handler(CommandHandler("status", status))
+        application.add_handler(CommandHandler("chats", list_chats))
         application.add_handler(conv_handler)
 
         logger.info("Запуск polling")
@@ -307,7 +334,7 @@ async def main():
             logger.info("Инициализация Telethon клиента")
             client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
 
-            @client.on(NewMessage)
+            @client.on(NewMessage(chats=None))  # Мониторить все доступные чаты
             async def handler(event):
                 await handle_new_message(event, application.bot, admin_id)
 
