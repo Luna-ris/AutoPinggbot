@@ -122,7 +122,7 @@ async def get_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "API_HASH": context.user_data['api_hash'],
         "SESSION_STRING": context.user_data['session_string'],
         "BOT_TOKEN": bot_token,
-        "ADMIN_ID": str(update.message.from_user.id)  # Сохраняем ID админа
+        "ADMIN_ID": str(update.message.from_user.id)
     }
     save_config(config)
     await update.message.reply_text("Настройка завершена! Бот готов к работе.")
@@ -198,11 +198,8 @@ async def handle_new_message(event, bot, admin_id):
     for user in tracked_users:
         if user.lower() in message_text:
             try:
-                # Получаем ссылку на сообщение
                 chat = await event.get_chat()
                 message_link = f"https://t.me/c/{str(chat.id).replace('-100', '')}/{event.message.id}"
-                
-                # Отправляем уведомление админу
                 await bot.send_message(
                     chat_id=admin_id,
                     text=f"Пользователь {user} был упомянут в сообщении: {message_link}"
@@ -218,13 +215,19 @@ async def main():
     bot_token = config.get("BOT_TOKEN")
     admin_id = config.get("ADMIN_ID")
 
-    if not all([api_id, api_hash, bot_token, session_string]):
-        logger.error("Не все параметры конфигурации заполнены. Используйте /setup для настройки.")
-        return
-
     try:
         # Инициализация бота
-        application = Application.builder().token(bot_token).build()
+        application = Application.builder().token(bot_token or "dummy_token").build()
+
+        # Проверка конфигурации
+        if not all([api_id, api_hash, bot_token, session_string]):
+            if admin_id:
+                await application.bot.send_message(
+                    chat_id=admin_id,
+                    text="Не все параметры конфигурации заполнены. Используйте /setup для настройки."
+                )
+            logger.error("Не все параметры конфигурации заполнены. Используйте /setup для настройки.")
+            return
 
         # Инициализация клиента Telethon
         client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
@@ -261,19 +264,21 @@ async def main():
         application.add_handler(CommandHandler("reconfigure", reconfigure))
         application.add_handler(conv_handler)
 
-        # Запуск клиента и бота в конкурентном режиме
+        # Запуск клиента и бота
         async with client:
-            # Запускаем polling в отдельной задаче
             await client.start()
             await application.initialize()
             await application.start()
             await application.updater.start_polling()
-            
-            # Ждем завершения
             await client.run_until_disconnected()
 
     except Exception as e:
         logger.error(f"Ошибка в главном цикле: {e}")
+        if admin_id:
+            await application.bot.send_message(
+                chat_id=admin_id,
+                text=f"Произошла ошибка при запуске бота: {str(e)}"
+            )
     finally:
         if 'application' in locals():
             await application.stop()
