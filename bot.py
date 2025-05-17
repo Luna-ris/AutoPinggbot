@@ -172,7 +172,7 @@ async def handle_new_message(event):
         if f"@{user}" in event.raw_text:
             await event.reply(f"Пользователь @{user} был упомянут в этом сообщении: {event.message.link}")
 
-def main():
+async def main():
     config = load_config()
     api_id = config.get("API_ID", os.getenv("API_ID"))
     api_hash = config.get("API_HASH", os.getenv("API_HASH"))
@@ -223,10 +223,10 @@ def main():
                 # Отправляем уведомление в Telegram-бота
                 await application.bot.send_message(chat_id=event.sender_id, text=f"Пользователь @{user} был упомянут в этом сообщении: {event.message.link}")
 
-    client.start()
-    client.run_until_disconnected()
+    await client.start()
+    await client.run_until_disconnected()
 
-    application.run_polling()
+    await application.run_polling()
 
 if __name__ == "__main__":
     import asyncio
