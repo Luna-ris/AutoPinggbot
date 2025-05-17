@@ -5,6 +5,7 @@ import asyncio
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 from telethon.events import NewMessage
+from telethon.tl.types import PeerChannel, PeerChat
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, ConversationHandler, MessageHandler,
@@ -71,7 +72,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not all(key in config for key in ["API_ID", "API_HASH", "SESSION_STRING", "ADMIN_ID"]):
         await update.message.reply_text("Бот не настроен. Используйте /setup для настройки.")
         return ConversationHandler.END
-    await update.message.reply_text("Привет! Бот готов к работе. Используйте /adduser для добавления пользователей или /status для проверки.")
+    welcome_message = """
+    🌟 Добро пожаловать в нашего бота! 🌟
+
+    Вот список доступных команд:
+
+    /start - Начать работу с ботом
+    /setup - Настроить бота
+    /adduser - Добавить пользователя для отслеживания
+    /removeuser - Удалить пользователя из списка отслеживания
+    /status - Проверить статус бота
+    /chats - Просмотреть доступные чаты
+    /testmention - Протестировать уведомления
+    /ping - Проверить активность бота
+    /reset - Сбросить настройки
+
+    Используйте эти команды для взаимодействия с ботом.
+    """
+    await update.message.reply_text(welcome_message)
     return ConversationHandler.END
 
 async def setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -250,30 +268,63 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with TelegramClient(StringSession(session_string), api_id, api_hash) as client:
             chats = []
             async for dialog in client.iter_dialogs():
-                chats.append(f"{dialog.name} (ID: {dialog.id})")
-            if chats:
-                await update.message.reply_text("Чаты, доступные Telethon клиенту:\n" + "\n".join(chats))
-            else:
-                await update.message.reply_text("Нет доступных чатов. Убедитесь, что ваш аккаунт подписан на группы/каналы.")
+                if isinstance(dialog.entity, (PeerChannel, PeerChat)):  # Только группы и каналы
+                    chats.append(f"{dialog.name} (ID: {dialog.id})")
+            if not chats:
+                await update.message.reply_text("Нет доступных групп или каналов. Подпишитесь на них через ваш аккаунт.")
+                return
+            # Разбиваем на сообщения по 4000 символов
+            message = "Чаты, доступные Telethon клиенту:\n"
+            messages = []
+            for chat in chats:
+                if len(message) + len(chat) + 1 > 4000:
+                    messages.append(message)
+                    message = "Продолжение:\n"
+                message += chat + "\n"
+            if message:
+                messages.append(message)
+            for msg in messages:
+                await update.message.reply_text(msg)
     except Exception as e:
         logger.error("Ошибка при получении списка чатов: %s", e)
         await update.message.reply_text(f"Ошибка: {str(e)}")
+
+async def test_mention(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Команда /testmention вызвана пользователем %s в чате %s", update.message.from_user.id, update.message.chat_id)
+    config = load_config()
+    if str(update.message.from_user.id) != config.get("ADMIN_ID"):
+        await update.message.reply_text("Только администратор может тестировать уведомления.")
+        return
+    tracked_users = load_tracked_users()
+    if not tracked_users:
+        await update.message.reply_text("Список отслеживаемых пользователей пуст. Добавьте пользователей через /adduser.")
+        return
+    try:
+        await context.bot.send_message(
+            chat_id=config["ADMIN_ID"],
+            text=f"Тестовое уведомление: Пользователь {tracked_users[0]} упомянут (тест)."
+        )
+        await update.message.reply_text("Тестовое уведомление отправлено. Проверьте личный чат с ботом.")
+    except Exception as e:
+        logger.error("Ошибка при отправке тестового уведомления: %s", e)
+        await update.message.reply_text(f"Ошибка при отправке тестового уведомления: {str(e)}")
 
 async def handle_new_message(event, bot, admin_id):
     logger.debug("Получено сообщение в чате %s: %s", event.chat_id, event.raw_text)
     tracked_users = load_tracked_users()
     message_text = event.raw_text.lower() if event.raw_text else ""
-    
+
     for user in tracked_users:
         if user.lower() in message_text:
             try:
                 chat = await event.get_chat()
+                chat_name = getattr(chat, 'title', 'Личный чат')
                 message_link = f"https://t.me/c/{str(chat.id).replace('-100', '')}/{event.message.id}"
                 await bot.send_message(
                     chat_id=admin_id,
-                    text=f"Пользователь {user} был упомянут в сообщении: {message_link}"
+                    text=f"Пользователь {user} упомянут в чате '{chat_name}': {message_link}"
                 )
-                logger.info("Уведомление отправлено админу %s о пользователе %s в чате %s", admin_id, user, chat.id)
+                logger.info("Уведомление отправлено админу %s о пользователе %s в чате %s (%s)", admin_id, user, chat.id, chat_name)
             except Exception as e:
                 logger.error("Ошибка при отправке уведомления: %s", e)
 
@@ -321,6 +372,7 @@ async def main():
         application.add_handler(CommandHandler("ping", ping))
         application.add_handler(CommandHandler("status", status))
         application.add_handler(CommandHandler("chats", list_chats))
+        application.add_handler(CommandHandler("testmention", test_mention))
         application.add_handler(conv_handler)
 
         logger.info("Запуск polling")
